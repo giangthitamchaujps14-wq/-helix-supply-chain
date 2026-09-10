@@ -1,0 +1,38 @@
+{
+  "url": "http://127.0.0.1:8081/",
+  "viewports": {
+    "desktop": {
+      "width": 1280,
+      "height": 800,
+      "status": 200,
+      "title": "Helix",
+      "hasCanvas": false,
+      "bodyTextLen": 1642,
+      "bodyTextHash": "4a81fb57025741b0023d7a92b4f61e833108ee194ec6a220183d5e8477939a9d",
+      "bodyTextPrefix": "HELIX Command center INVENTORY Inventory Analysis ABC-XYZ Analys",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-built.png"
+    },
+    "mobile": {
+      "width": 390,
+      "height": 844,
+      "status": 200,
+      "title": "Helix",
+      "hasCanvas": false,
+      "bodyTextLen": 1413,
+      "bodyTextHash": "b2e506b613a1b3b39754eb0f7f407de94ccdc87857229372c9a16d35f1a38508",
+      "bodyTextPrefix": "Helix SUPPLY CHAIN INTELLIGENCE Helix Nền tảng phân tích chuỗi c",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-built-mobile.png"
+    }
+  },
+  "brandWarnings": [],
+  "authWarnings": [],
+  "verdictFile": "/workspace/screenshots/app-builder-built.json",
+  "divergesFromBaseline": false,
+  "baselineReasons": []
+}
