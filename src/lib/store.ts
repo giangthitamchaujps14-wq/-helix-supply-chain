@@ -15,6 +15,7 @@ interface WorkspaceState {
   targetDays: number;
   loadDemo: (data: Omit<Dataset, "files">) => void;
   addTable: (table: UploadedTable, slot?: FileSlot) => FileSlot;
+  removeTable: (name: string) => void;
   setSlot: (name: string, slot: FileSlot) => void;
   setMapping: (name: string, mapping: UploadedTable["mapping"]) => void;
   rebuildFromTables: () => void;
@@ -64,6 +65,29 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     }));
     get().rebuildFromTables();
     return s;
+  },
+
+  removeTable: (name) => {
+    set((st) => ({
+      tables: st.tables.filter((t) => t.table.name !== name),
+      lastResult: null,
+      lastTool: null,
+    }));
+    const { tables, demoLoaded } = get();
+    if (!tables.length) {
+      if (demoLoaded) {
+        set({
+          dataset: {
+            ...DEMO_DATASET,
+            files: [{ name: "ABC-MART snapshot", slot: "demo" }],
+          },
+        });
+      } else {
+        set({ dataset: emptyDataset("empty") });
+      }
+      return;
+    }
+    get().rebuildFromTables();
   },
 
   setSlot: (name, slot) => {
