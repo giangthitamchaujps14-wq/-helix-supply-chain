@@ -2,13 +2,53 @@ import * as XLSX from "xlsx";
 import type { ColumnRole, FileSlot, SkuRecord, UploadedTable } from "./types";
 
 const ROLE_ALIASES: Record<ColumnRole, string[]> = {
-  sku: ["sku", "ma sku", "mã sku", "item", "itemid", "product_id", "ma hang", "mã hàng", "model", "ma model"],
-  name: ["name", "ten", "tên", "product", "item name", "ten hang", "tên hàng"],
-  category: ["category", "nhom", "nhóm", "nganh", "ngành", "group", "brand"],
-  location: ["location", "cua hang", "cửa hàng", "store", "kho", "warehouse", "site"],
-  qty: ["qty", "quantity", "ton", "tồn", "ton cuoi", "tồn cuối", "closing", "onhand", "stock", "sl ton"],
-  salesQty: ["sales", "qty sold", "sl ban", "sl bán", "weekly", "ban tuan", "bán tuần", "sold", "velocity"],
-  revenue: ["revenue", "doanh thu", "amount", "thanh tien", "thành tiền", "sales value"],
+  sku: [
+    "sku",
+    "ma sku",
+    "mã sku",
+    "ma hang",
+    "mã hàng",
+    "item",
+    "itemid",
+    "product_id",
+    "model",
+    "ma model",
+    "ma sp",
+    "mã sp",
+  ],
+  name: ["name", "ten", "tên", "product", "item name", "ten hang", "tên hàng", "ten hang hoa", "tên hàng hóa"],
+  category: ["category", "nhom", "nhóm", "nganh", "ngành", "group", "brand", "nhom hang", "nhóm hàng", "nhom hang hoa"],
+  location: ["location", "cua hang", "cửa hàng", "store", "kho", "warehouse", "site", "chi nhanh", "chi nhánh"],
+  qty: [
+    "qty",
+    "quantity",
+    "ton",
+    "tồn",
+    "ton cuoi",
+    "tồn cuối",
+    "ton cuoi ky",
+    "tồn cuối kỳ",
+    "closing",
+    "onhand",
+    "stock",
+    "sl ton",
+    "so luong ton",
+    "số lượng tồn",
+  ],
+  salesQty: [
+    "sales",
+    "qty sold",
+    "sl ban",
+    "sl bán",
+    "weekly",
+    "ban tuan",
+    "bán tuần",
+    "sold",
+    "velocity",
+    "so luong ban",
+    "số lượng bán",
+  ],
+  revenue: ["revenue", "doanh thu", "amount", "thanh tien", "thành tiền", "sales value", "gia tri"],
   unitCost: ["cost", "unit cost", "gia von", "giá vốn", "cogs", "von"],
   unitPrice: ["price", "unit price", "gia ban", "giá bán", "avg price"],
   forecast: ["forecast", "fcst", "du bao", "dự báo", "plan"],
@@ -29,8 +69,9 @@ function norm(s: string) {
 
 export function guessRole(header: string): ColumnRole | null {
   const h = norm(header);
+  if (!h) return null;
   for (const [role, aliases] of Object.entries(ROLE_ALIASES) as [ColumnRole, string[]][]) {
-    if (aliases.some((a) => h === a || h.includes(a))) return role;
+    if (aliases.some((a) => h === a || h.includes(a) || a.includes(h))) return role;
   }
   return null;
 }
@@ -50,40 +91,178 @@ function cell(v: unknown) {
   return String(v).trim();
 }
 
+function isMostlyNumeric(row: (string | number | null)[]) {
+  const filled = row.filter((c) => String(c ?? "").trim());
+  if (!filled.length) return false;
+  let nums = 0;
+  for (const c of filled) {
+    const s = String(c).replace(/[,%\s]/g, "");
+    if (s && !Number.isNaN(Number(s))) nums++;
+  }
+  return nums / filled.length >= 0.5;
+}
+
+function headerScore(row: (string | number | null)[]): number {
+  const texts = row.map((c) => cell(c)).filter(Boolean);
+  if (texts.length < 2) return 0;
+  if (isMostlyNumeric(row)) return 0;
+
+  let score = texts.length;
+  let roleHits = 0;
+  for (const t of texts) {
+    if (guessRole(t)) {
+      roleHits++;
+      score += 8;
+    }
+    const n = norm(t);
+    // common inventory report headers
+    if (n.includes("ma sku") || n.includes("sku") || n.includes("ton cuoi") || n.includes("ten hang")) {
+      score += 12;
+    }
+    if (n === "so luong" || n === "gia tri") score += 2;
+  }
+  // strong bonus if looks like a real header row
+  if (roleHits >= 2) score += 20;
+  return score;
+}
+
+/** Build flat headers from 1–2 header rows (handles "Tồn cuối kỳ" + "Số lượng"). */
+function buildHeaders(
+  primary: (string | number | null)[],
+  secondary?: (string | number | null)[],
+): string[] {
+  const len = Math.max(primary.length, secondary?.length ?? 0);
+  const headers: string[] = [];
+  let lastParent = "";
+
+  for (let i = 0; i < len; i++) {
+    const p = cell(primary[i]);
+    const s = secondary ? cell(secondary[i]) : "";
+    if (p) lastParent = p;
+
+    let label = "";
+    if (p && s) {
+      // e.g. parent "Tồn cuối kỳ" + child "Số lượng"
+      label = `${lastParent} - ${s}`;
+    } else if (p) {
+      label = p;
+    } else if (s && lastParent) {
+      label = `${lastParent} - ${s}`;
+    } else if (s) {
+      label = s;
+    } else {
+      label = `col_${i + 1}`;
+    }
+
+    // Prefer quantity column under tồn cuối as plain qty-friendly name
+    const n = norm(label);
+    if (n.includes("ton cuoi") && n.includes("so luong")) {
+      label = "Tồn cuối kỳ - Số lượng";
+    }
+
+    headers.push(label);
+  }
+
+  // de-dupe identical names
+  const seen = new Map<string, number>();
+  return headers.map((h) => {
+    const c = (seen.get(h) ?? 0) + 1;
+    seen.set(h, c);
+    return c > 1 ? `${h} (${c})` : h;
+  });
+}
+
+function pickBestSheet(wb: XLSX.WorkBook): string {
+  let bestName = wb.SheetNames[0];
+  let bestScore = -1;
+
+  for (const name of wb.SheetNames) {
+    const sheet = wb.Sheets[name];
+    const matrix = XLSX.utils.sheet_to_json<(string | number | null)[]>(sheet, {
+      header: 1,
+      defval: "",
+      raw: false,
+    });
+    let score = 0;
+    for (let i = 0; i < Math.min(matrix.length, 20); i++) {
+      score = Math.max(score, headerScore(matrix[i] ?? []));
+    }
+    // prefer sheets with more rows (detail vs summary)
+    score += Math.min(matrix.length / 100, 30);
+    if (score > bestScore) {
+      bestScore = score;
+      bestName = name;
+    }
+  }
+  return bestName;
+}
+
 export function parseWorkbook(buffer: ArrayBuffer, filename: string): UploadedTable {
   const wb = XLSX.read(buffer, { type: "array", cellDates: true });
-  const sheetName = wb.SheetNames[0];
+  const sheetName = pickBestSheet(wb);
   const sheet = wb.Sheets[sheetName];
   const matrix = XLSX.utils.sheet_to_json<(string | number | null)[]>(sheet, {
     header: 1,
     defval: "",
     raw: false,
   });
+
+  // Find best header row by semantic score (not just fill count)
   let headerIdx = 0;
-  let best = 0;
-  for (let i = 0; i < Math.min(matrix.length, 12); i++) {
-    const row = matrix[i] ?? [];
-    const filled = row.filter((c) => String(c).trim()).length;
-    if (filled > best) {
-      best = filled;
+  let best = -1;
+  for (let i = 0; i < Math.min(matrix.length, 25); i++) {
+    const sc = headerScore(matrix[i] ?? []);
+    if (sc > best) {
+      best = sc;
       headerIdx = i;
     }
   }
-  const headers = (matrix[headerIdx] ?? []).map((c, i) => {
-    const s = cell(c);
-    return s || `col_${i + 1}`;
-  });
+
+  // Detect 2-level header: next row is "Số lượng / Giá trị"
+  let secondaryIdx: number | null = null;
+  const next = matrix[headerIdx + 1] ?? [];
+  const nextTexts = next.map((c) => norm(cell(c))).filter(Boolean);
+  const looksLikeSubHeader =
+    nextTexts.length >= 2 &&
+    nextTexts.some((t) => t === "so luong" || t.includes("so luong")) &&
+    nextTexts.some((t) => t === "gia tri" || t.includes("gia tri")) &&
+    !isMostlyNumeric(next);
+
+  if (looksLikeSubHeader) secondaryIdx = headerIdx + 1;
+
+  const headers = buildHeaders(
+    matrix[headerIdx] ?? [],
+    secondaryIdx != null ? matrix[secondaryIdx] : undefined,
+  );
+
+  const dataStart = (secondaryIdx != null ? secondaryIdx : headerIdx) + 1;
   const rows: Record<string, string>[] = [];
-  for (let i = headerIdx + 1; i < matrix.length; i++) {
+  for (let i = dataStart; i < matrix.length; i++) {
     const raw = matrix[i] ?? [];
     if (!raw.some((c) => String(c).trim())) continue;
+    // skip total/summary trailing rows (empty sku-like first col + large numbers)
+    const first = cell(raw[0]);
+    if (!first && i > dataStart + 5) continue;
+
     const rec: Record<string, string> = {};
     headers.forEach((h, idx) => {
       rec[h] = cell(raw[idx]);
     });
     rows.push(rec);
   }
-  return { name: filename, headers, rows, mapping: autoMap(headers) };
+
+  const mapping = autoMap(headers);
+
+  // Prefer "Tồn cuối kỳ - Số lượng" for qty if multiple qty-like cols
+  if (!mapping.qty) {
+    const qtyHeader = headers.find((h) => {
+      const n = norm(h);
+      return n.includes("ton cuoi") && n.includes("so luong");
+    });
+    if (qtyHeader) mapping.qty = qtyHeader;
+  }
+
+  return { name: filename, headers, rows, mapping };
 }
 
 function num(v: string | undefined) {
