@@ -23,9 +23,15 @@ export interface AbcRow {
   name: string;
   category: string;
   revenue: number;
+  weeklySales: number;
+  profit: number;
   share: number;
   cumulative: number;
   abc: "A" | "B" | "C";
+  abcQty: "A" | "B" | "C";
+  abcRev: "A" | "B" | "C";
+  abcProfit: "A" | "B" | "C";
+  triple: string;
   xyz: "X" | "Y" | "Z";
   cv: number;
   qty: number;
@@ -68,10 +74,26 @@ export interface ForecastRow {
 }
 
 export type ToolResult =
-  | { tool: "inventory"; kpis: Record<string, number>; rows: InventoryRow[]; byCategory: { name: string; qty: number; value: number }[]; byStatus: { name: string; count: number }[] }
-  | { tool: "abc-xyz"; kpis: Record<string, number>; rows: AbcRow[]; matrix: { key: string; count: number; revenue: number }[] }
+  | {
+      tool: "inventory";
+      kpis: Record<string, number>;
+      rows: InventoryRow[];
+      byCategory: { name: string; qty: number; value: number }[];
+      byStatus: { name: string; count: number }[];
+    }
+  | {
+      tool: "abc-xyz";
+      kpis: Record<string, number>;
+      rows: AbcRow[];
+      matrix: { key: string; count: number; revenue: number }[];
+    }
   | { tool: "turnover"; kpis: Record<string, number>; rows: TurnoverRow[] }
-  | { tool: "financial"; kpis: Record<string, number>; rows: FinancialRow[]; byCategory: { name: string; value: number; carrying: number }[] }
+  | {
+      tool: "financial";
+      kpis: Record<string, number>;
+      rows: FinancialRow[];
+      byCategory: { name: string; value: number; carrying: number }[];
+    }
   | { tool: "forecast"; kpis: Record<string, number>; rows: ForecastRow[] }
   | { tool: "replenishment"; kpis: Record<string, number>; rows: ReplenRow[] };
 
@@ -91,6 +113,19 @@ function cv(series: number[]) {
   if (mean === 0) return 99;
   const varc = series.reduce((a, b) => a + (b - mean) ** 2, 0) / series.length;
   return Math.sqrt(varc) / mean;
+}
+
+function abcClassByMetric<T>(items: T[], valueFn: (x: T) => number): Map<T, "A" | "B" | "C"> {
+  const sorted = [...items].sort((a, b) => valueFn(b) - valueFn(a));
+  const total = sorted.reduce((s, x) => s + Math.max(0, valueFn(x)), 0) || 1;
+  let cum = 0;
+  const map = new Map<T, "A" | "B" | "C">();
+  for (const x of sorted) {
+    cum += Math.max(0, valueFn(x));
+    const c = cum / total;
+    map.set(x, c <= 0.8 ? "A" : c <= 0.95 ? "B" : "C");
+  }
+  return map;
 }
 
 export function detectGaps(tool: ToolId, dataset: Dataset | null): Gap[] {
@@ -159,38 +194,63 @@ export function runInventory(ds: Dataset): ToolResult {
       dead: rows.filter((r) => r.status === "DEAD").length,
       qty: rows.reduce((a, r) => a + r.qty, 0),
     },
-    rows: rows.sort((a, b) => a.coverDays === null ? 1 : (b.coverDays ?? 0) - (a.coverDays ?? 0)),
+    rows: rows.sort((a, b) => (a.coverDays === null ? 1 : (b.coverDays ?? 0) - (a.coverDays ?? 0))),
     byCategory,
     byStatus: [...byStatusMap.entries()].map(([name, count]) => ({ name, count })),
   };
 }
 
 export function runAbc(ds: Dataset): ToolResult {
-  const live = [...ds.skus].sort((a, b) => b.revenue - a.revenue);
+  const skus = ds.skus.filter((s) => s.weeklySales > 0 || s.revenue > 0 || s.qty > 0);
+
+  const profitOf = (s: (typeof skus)[0]) => {
+    const cost = s.unitCost > 0 ? s.unitCost : s.unitPrice > 0 ? s.unitPrice * 0.55 : 0;
+    const sold = s.weeklySales > 0 ? s.weeklySales : 0;
+    if (s.revenue > 0 && cost > 0) return s.revenue - cost * sold;
+    if (s.revenue > 0) return s.revenue * 0.45;
+    return 0;
+  };
+
+  const byQty = abcClassByMetric(skus, (s) => s.weeklySales);
+  const byRev = abcClassByMetric(skus, (s) => s.revenue);
+  const byProfit = abcClassByMetric(skus, (s) => profitOf(s));
+
+  const live = [...skus].sort((a, b) => b.revenue - a.revenue);
   const total = live.reduce((a, s) => a + s.revenue, 0) || 1;
   let cum = 0;
+
   const rows: AbcRow[] = live.map((s) => {
     cum += s.revenue;
     const share = s.revenue / total;
     const c = cum / total;
-    const abc: AbcRow["abc"] = c <= 0.8 ? "A" : c <= 0.95 ? "B" : "C";
+    const abcRev = byRev.get(s) ?? "C";
+    const abcQty = byQty.get(s) ?? "C";
+    const abcProfit = byProfit.get(s) ?? "C";
     const v = cv(s.actuals.length ? s.actuals : [s.weeklySales]);
     const xyz: AbcRow["xyz"] = v < 0.5 ? "X" : v < 1 ? "Y" : "Z";
     const d = cover(s, ds.periodDays);
+    const profit = profitOf(s);
     return {
       sku: s.sku,
       name: s.name,
       category: s.category,
       revenue: s.revenue,
+      weeklySales: s.weeklySales,
+      profit,
       share,
       cumulative: c,
-      abc,
+      abc: abcRev,
+      abcQty,
+      abcRev,
+      abcProfit,
+      triple: `${abcQty}${abcRev}${abcProfit}`,
       xyz,
       cv: v,
       qty: s.qty,
       coverDays: d === Infinity ? 999 : d,
     };
   });
+
   const matrixMap = new Map<string, { count: number; revenue: number }>();
   for (const r of rows) {
     const key = `${r.abc}${r.xyz}`;
@@ -204,13 +264,18 @@ export function runAbc(ds: Dataset): ToolResult {
     count: matrixMap.get(key)?.count ?? 0,
     revenue: matrixMap.get(key)?.revenue ?? 0,
   }));
+
+  const tripleTop = rows.filter((r) => r.triple === "AAA").length;
+
   return {
     tool: "abc-xyz",
     kpis: {
-      a: rows.filter((r) => r.abc === "A").length,
-      b: rows.filter((r) => r.abc === "B").length,
-      c: rows.filter((r) => r.abc === "C").length,
+      a: rows.filter((r) => r.abcRev === "A").length,
+      b: rows.filter((r) => r.abcRev === "B").length,
+      c: rows.filter((r) => r.abcRev === "C").length,
       revenue: total,
+      aaa: tripleTop,
+      profit: rows.reduce((s, r) => s + r.profit, 0),
     },
     rows,
     matrix,
@@ -309,7 +374,7 @@ export function runForecast(ds: Dataset): ToolResult {
   const rows: ForecastRow[] = ds.skus
     .filter((s) => s.actuals.length || s.weeklySales > 0)
     .map((s) => {
-      let actuals = s.actuals.length ? s.actuals : [s.weeklySales];
+      const actuals = s.actuals.length ? s.actuals : [s.weeklySales];
       let forecasts = s.forecasts.slice();
       let method: ForecastRow["method"] = "uploaded";
       if (forecasts.length === 0) {
