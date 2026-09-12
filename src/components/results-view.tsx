@@ -117,10 +117,11 @@ function InventoryResult({ r }: { r: Extract<ToolResult, { tool: "inventory" }> 
 function AbcResult({ r }: { r: Extract<ToolResult, { tool: "abc-xyz" }> }) {
   return (
     <>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Kpi label="Class A" value={formatNumber(r.kpis.a, 0)} hint="~80% doanh thu" />
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        <Kpi label="Class A (Rev)" value={formatNumber(r.kpis.a, 0)} hint="~80% doanh thu" />
         <Kpi label="Class B" value={formatNumber(r.kpis.b, 0)} />
         <Kpi label="Class C" value={formatNumber(r.kpis.c, 0)} />
+        <Kpi label="AAA (Qty+Rev+Profit)" value={formatNumber(r.kpis.aaa ?? 0, 0)} />
         <Kpi label="Doanh thu" value={formatVnd(r.kpis.revenue)} />
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
@@ -138,7 +139,13 @@ function AbcResult({ r }: { r: Extract<ToolResult, { tool: "abc-xyz" }> }) {
         <ChartCard title="Phân bố doanh thu">
           <ResponsiveContainer width="100%" height={240}>
             <PieChart>
-              <Pie data={r.matrix.filter((m) => m.revenue > 0)} dataKey="revenue" nameKey="key" innerRadius={50} outerRadius={80}>
+              <Pie
+                data={r.matrix.filter((m) => m.revenue > 0)}
+                dataKey="revenue"
+                nameKey="key"
+                innerRadius={50}
+                outerRadius={80}
+              >
                 {r.matrix.map((_, i) => (
                   <Cell key={i} fill={CHART[i % CHART.length]} />
                 ))}
@@ -150,13 +157,27 @@ function AbcResult({ r }: { r: Extract<ToolResult, { tool: "abc-xyz" }> }) {
       </div>
       <DataTable
         rows={r.rows as unknown as Record<string, unknown>[]}
-        searchKeys={["sku", "name", "abc", "xyz"]}
+        searchKeys={["sku", "name", "triple", "abcQty", "abcRev", "abcProfit", "xyz"]}
         columns={[
           { key: "sku", label: "SKU" },
           { key: "name", label: "Tên" },
-          { key: "abc", label: "ABC", badge: (v) => (v === "A" ? "ok" : v === "B" ? "warn" : "default") },
-          { key: "xyz", label: "XYZ", badge: (v) => (v === "X" ? "ok" : v === "Y" ? "warn" : "bad") },
+          {
+            key: "triple",
+            label: "Rank 3D",
+            badge: (v) =>
+              String(v) === "AAA" ? "ok" : String(v).startsWith("A") ? "warn" : "default",
+          },
+          { key: "abcQty", label: "ABC SL" },
+          { key: "abcRev", label: "ABC DT" },
+          { key: "abcProfit", label: "ABC LN" },
+          {
+            key: "xyz",
+            label: "XYZ",
+            badge: (v) => (v === "X" ? "ok" : v === "Y" ? "warn" : "bad"),
+          },
+          { key: "weeklySales", label: "SL bán", numeric: true, format: "number" },
           { key: "revenue", label: "Doanh thu", numeric: true, format: "int" },
+          { key: "profit", label: "Profit", numeric: true, format: "int" },
           { key: "cv", label: "CV", numeric: true, format: "number" },
           { key: "coverDays", label: "Cover", numeric: true, format: "days" },
         ]}
@@ -164,7 +185,6 @@ function AbcResult({ r }: { r: Extract<ToolResult, { tool: "abc-xyz" }> }) {
     </>
   );
 }
-
 function TurnResult({ r }: { r: Extract<ToolResult, { tool: "turnover" }> }) {
   return (
     <>
