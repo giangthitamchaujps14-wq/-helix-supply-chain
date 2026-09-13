@@ -17,9 +17,17 @@ import { DataTable } from "./data-table";
 import { Kpi } from "./kpi";
 import { Button } from "./ui/button";
 import { exportProfessionalReport } from "@/lib/report-export";
+import { generateReportWithChart } from "@/lib/report-export-action";
 import { useWorkspace } from "@/lib/store";
 import { Badge } from "./ui/badge";
 import { useState } from "react";
+
+function base64ToBlob(base64: string, type: string) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type });
+}
 
 const CHART = ["#c9d0cb", "#7d9a86", "#c4a574", "#c47a6a", "#8a9aa8", "#6d6a64", "#ece8e1", "#3a4048"];
 
@@ -29,13 +37,33 @@ export function ResultsView({ result }: { result: ToolResult }) {
 
   async function handleExport() {
     setExporting(true);
+    const meta = {
+      datasetSource: dataset?.source,
+      skuCount: dataset?.skus.length,
+      files: dataset?.files.map((f) => f.name),
+      generatedAt: new Date(),
+    };
     try {
-      await exportProfessionalReport(result.tool, result, {
-        datasetSource: dataset?.source,
-        skuCount: dataset?.skus.length,
-        files: dataset?.files.map((f) => f.name),
-        generatedAt: new Date(),
+      // Tạo file trên server để chèn được chart Excel gốc (thư viện tạo
+      // chart cần Node.js, không chạy được trong trình duyệt).
+      const { base64, filename } = await generateReportWithChart({
+        data: { tool: result.tool, result, meta },
       });
+      const blob = base64ToBlob(
+        base64,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      );
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      // Server export lỗi (mất mạng, server down...) -> fallback về export
+      // cũ chạy thẳng trên trình duyệt, vẫn ra được file (không có chart gốc).
+      console.error("[export] server export failed, falling back to client export:", err);
+      await exportProfessionalReport(result.tool, result, meta);
     } finally {
       setExporting(false);
     }

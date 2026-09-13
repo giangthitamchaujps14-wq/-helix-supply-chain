@@ -85,23 +85,66 @@ export interface ReportMeta {
   topN?: number;
 }
 
+/** Dữ liệu top SKU dùng để vẽ chart (Excel gốc, chèn ở bước server). */
+export interface ReportChartRow {
+  sku: string;
+  qty: number;
+}
+
+export function reportFileName(tool: ToolId) {
+  return `helix-${tool}-report-${new Date().toISOString().slice(0, 10)}.xlsx`;
+}
+
+/**
+ * Dựng workbook (ExcelJS) — dùng chung cho cả export client (tải trực tiếp,
+ * không có chart gốc) và export server (có ghép chart gốc ở report-export.server.ts).
+ * KHÔNG đụng tới DOM/Blob ở đây để hàm này chạy được trên server.
+ */
+export async function buildReportWorkbook(
+  tool: ToolId,
+  result: ToolResult,
+  meta: ReportMeta = {},
+): Promise<{ wb: ExcelJS.Workbook; chartData: ReportChartRow[] }> {
+  const schema = schemaFor(tool);
+  const { default: ExcelJSLib } = await import("exceljs");
+  const wb = new ExcelJSLib.Workbook();
+  wb.creator = "Helix Supply Chain Analytics";
+  wb.created = meta.generatedAt ?? new Date();
+
+  let chartData: ReportChartRow[] = [];
+  if (tool === "abc-xyz" && result.tool === "abc-xyz") {
+    chartData = buildAbcPoster(wb, result, schema, meta);
+  } else {
+    buildGeneric(wb, result, schema, meta);
+  }
+
+  return { wb, chartData };
+}
+
+/**
+ * Dựng buffer .xlsx thô (chưa có chart gốc) — dùng bởi report-export.server.ts
+ * để ghép chart trước khi trả về client.
+ */
+export async function buildReportBuffer(
+  tool: ToolId,
+  result: ToolResult,
+  meta: ReportMeta = {},
+): Promise<{ buffer: ArrayBuffer; chartData: ReportChartRow[] }> {
+  const { wb, chartData } = await buildReportWorkbook(tool, result, meta);
+  const buffer = await wb.xlsx.writeBuffer();
+  return { buffer, chartData };
+}
+
+/**
+ * Export cũ — chạy trên trình duyệt, tải file ngay (KHÔNG có chart Excel gốc,
+ * vì thư viện tạo chart cần Node.js). Dùng làm fallback nếu server export lỗi.
+ */
 export async function exportProfessionalReport(
   tool: ToolId,
   result: ToolResult,
   meta: ReportMeta = {},
 ) {
-  const schema = schemaFor(tool);
-  const { default: ExcelJS } = await import("exceljs");
-  const wb = new ExcelJS.Workbook();
-  wb.creator = "Helix Supply Chain Analytics";
-  wb.created = meta.generatedAt ?? new Date();
-
-  if (tool === "abc-xyz" && result.tool === "abc-xyz") {
-    buildAbcPoster(wb, result, schema, meta);
-  } else {
-    buildGeneric(wb, result, schema, meta);
-  }
-
+  const { wb } = await buildReportWorkbook(tool, result, meta);
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -109,7 +152,7 @@ export async function exportProfessionalReport(
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `helix-${tool}-report-${new Date().toISOString().slice(0, 10)}.xlsx`;
+  a.download = reportFileName(tool);
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -119,7 +162,7 @@ function buildAbcPoster(
   result: Extract<ToolResult, { tool: "abc-xyz" }>,
   schema: ReturnType<typeof schemaFor>,
   meta: ReportMeta,
-) {
+): ReportChartRow[] {
   const rows = result.rows;
   const k = result.kpis;
   const topN = Math.min(50, Math.max(5, meta.topN ?? 15));
@@ -465,6 +508,8 @@ function buildAbcPoster(
     const r = mx.addRow([m.key, m.count, m.revenue]);
     r.getCell(3).numFmt = "#,##0";
   });
+
+  return topByQty.map((r) => ({ sku: r.sku, qty: r.weeklySales }));
 }
 
 function addDetailSheet(

@@ -1,0 +1,4 @@
+declare module "xlsx-chart" {
+  const XLSXChart: any;
+  export default XLSXChart;
+}
