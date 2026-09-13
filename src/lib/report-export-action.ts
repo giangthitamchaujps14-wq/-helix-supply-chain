@@ -31,12 +31,23 @@ export const generateReportWithChart = createServerFn({ method: "POST" })
 
     // Không có dữ liệu để vẽ chart (vd tool khác abc-xyz) -> trả file gốc.
     if (!chartData.length) {
-      return { base64: Buffer.from(buffer).toString("base64"), filename, chartEmbedded: false };
+      return {
+        base64: Buffer.from(buffer).toString("base64"),
+        filename,
+        chartEmbedded: false,
+      };
     }
 
     try {
       const { default: XLSXChart } = await import("xlsx-chart");
       const { mergeChartIntoWorkbook } = await import("./xlsx-chart-merge.server");
+      const { createRequire } = await import("module");
+      const path = await import("path");
+
+      // Fix lỗi __dirname is not defined trên ESM / Vercel
+      const require = createRequire(import.meta.url);
+      const xlsxChartDir = path.dirname(require.resolve("xlsx-chart/package.json"));
+      const templatePath = path.join(xlsxChartDir, "template", "column.xlsx");
 
       const fields = chartData.map((r) => r.sku);
       const values: Record<string, number> = {};
@@ -53,8 +64,10 @@ export const generateReportWithChart = createServerFn({ method: "POST" })
             fields,
             data: { QTY: values },
             chartTitle: `Top ${fields.length} SKU theo QTY`,
+            templatePath, // quan trọng: chỉ định rõ đường dẫn template
           },
-          (err: Error | null, buf: Buffer) => (err ? reject(err) : resolve(buf)),
+          (err: Error | null, buf: Buffer) =>
+            err ? reject(err) : resolve(buf),
         );
       });
 
@@ -64,11 +77,21 @@ export const generateReportWithChart = createServerFn({ method: "POST" })
         targetSheetName: "Dashboard",
       });
 
-      return { base64: merged.toString("base64"), filename, chartEmbedded: true };
+      return {
+        base64: merged.toString("base64"),
+        filename,
+        chartEmbedded: true,
+      };
     } catch (err) {
-      // Ghép chart lỗi (thư viện bên thứ 3, phiên bản Excel lạ...) -> vẫn trả
-      // báo cáo bình thường thay vì làm cả nút "Tải báo cáo" bị hỏng.
-      console.error("[report-export] chart embed failed, falling back to plain report:", err);
-      return { base64: Buffer.from(buffer).toString("base64"), filename, chartEmbedded: false };
+      // Ghép chart lỗi → vẫn trả báo cáo bình thường
+      console.error(
+        "[report-export] chart embed failed, falling back to plain report:",
+        err,
+      );
+      return {
+        base64: Buffer.from(buffer).toString("base64"),
+        filename,
+        chartEmbedded: false,
+      };
     }
   });
