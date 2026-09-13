@@ -2,7 +2,6 @@ import { createServerFn } from "@tanstack/react-start";
 import type { ToolId } from "./types";
 import type { ToolResult } from "./engine";
 import { buildReportBuffer, reportFileName, type ReportMeta } from "./report-export";
-import { join } from "path";
 
 export interface GenerateReportInput {
   tool: ToolId;
@@ -32,25 +31,24 @@ export const generateReportWithChart = createServerFn({ method: "POST" })
 
     // Không có dữ liệu để vẽ chart (vd tool khác abc-xyz) -> trả file gốc.
     if (!chartData.length) {
-      return {
-        base64: Buffer.from(buffer).toString("base64"),
-        filename,
-        chartEmbedded: false,
-      };
+      return { base64: Buffer.from(buffer).toString("base64"), filename, chartEmbedded: false };
     }
 
     try {
       const { default: XLSXChart } = await import("xlsx-chart");
       const { mergeChartIntoWorkbook } = await import("./xlsx-chart-merge.server");
-
-      // Template nằm trong public/ → Vercel luôn copy vào output
-      const templatePath = join(process.cwd(), "public/xlsx-chart-templates/column.xlsx");
+      const { getColumnTemplatePath } = await import("./xlsx-chart-template.server");
 
       const fields = chartData.map((r) => r.sku);
       const values: Record<string, number> = {};
       chartData.forEach((r) => {
         values[r.sku] = r.qty;
       });
+
+      // Template cho xlsx-chart phải là file thật trên đĩa. Vercel không
+      // đóng gói sẵn file này (đọc trực tiếp bằng fs, không phải import
+      // JS/TS) nên ta tự ghi nó ra thư mục tạm từ dữ liệu nhúng sẵn.
+      const templatePath = await getColumnTemplatePath();
 
       const xlsxChart = new XLSXChart();
       const chartBuffer: Buffer = await new Promise((resolve, reject) => {
@@ -63,8 +61,7 @@ export const generateReportWithChart = createServerFn({ method: "POST" })
             chartTitle: `Top ${fields.length} SKU theo QTY`,
             templatePath,
           },
-          (err: Error | null, buf: Buffer) =>
-            err ? reject(err) : resolve(buf),
+          (err: Error | null, buf: Buffer) => (err ? reject(err) : resolve(buf)),
         );
       });
 
@@ -74,20 +71,11 @@ export const generateReportWithChart = createServerFn({ method: "POST" })
         targetSheetName: "Dashboard",
       });
 
-      return {
-        base64: merged.toString("base64"),
-        filename,
-        chartEmbedded: true,
-      };
+      return { base64: merged.toString("base64"), filename, chartEmbedded: true };
     } catch (err) {
-      console.error(
-        "[report-export] chart embed failed, falling back to plain report:",
-        err,
-      );
-      return {
-        base64: Buffer.from(buffer).toString("base64"),
-        filename,
-        chartEmbedded: false,
-      };
+      // Ghép chart lỗi (thư viện bên thứ 3, phiên bản Excel lạ...) -> vẫn trả
+      // báo cáo bình thường thay vì làm cả nút "Tải báo cáo" bị hỏng.
+      console.error("[report-export] chart embed failed, falling back to plain report:", err);
+      return { base64: Buffer.from(buffer).toString("base64"), filename, chartEmbedded: false };
     }
   });
