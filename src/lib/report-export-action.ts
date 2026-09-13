@@ -69,6 +69,9 @@ export const generateReportWithChart = createServerFn({ method: "POST" })
         mainBuffer: Buffer.from(buffer),
         chartBuffer,
         targetSheetName: "Dashboard",
+        // Dashboard dùng hết cột A→L (dimension A1:L40+), nên đặt chart
+        // bắt đầu từ cột N (index 13, 0-based) để không đè lên nội dung.
+        anchor: { fromCol: 13, fromRow: 3, toCol: 24, toRow: 23 },
       });
 
       return { base64: merged.toString("base64"), filename, chartEmbedded: true };

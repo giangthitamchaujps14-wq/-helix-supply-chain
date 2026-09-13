@@ -13,6 +13,19 @@
  */
 import JSZip from "jszip";
 
+export interface ChartAnchor {
+  /** Cột bắt đầu, đánh số từ 0 (0 = cột A). */
+  fromCol: number;
+  /** Hàng bắt đầu, đánh số từ 0 (0 = hàng 1). */
+  fromRow: number;
+  fromColOffsetEmu?: number;
+  fromRowOffsetEmu?: number;
+  toCol: number;
+  toRow: number;
+  toColOffsetEmu?: number;
+  toRowOffsetEmu?: number;
+}
+
 export interface MergeChartOptions {
   /** Buffer .xlsx do ExcelJS tạo ra (report chính, đầy đủ style). */
   mainBuffer: ArrayBuffer | Buffer;
@@ -20,12 +33,19 @@ export interface MergeChartOptions {
   chartBuffer: Buffer;
   /** Tên sheet trong file chính sẽ được gắn chart vào, vd "Dashboard". */
   targetSheetName: string;
+  /**
+   * Vị trí đặt chart trên sheet. xlsx-chart LUÔN đặt chart mặc định ở góc
+   * A1, đè lên bất kỳ nội dung gì đã có sẵn ở đó — bắt buộc phải chỉ định
+   * lại vùng trống nếu sheet đích đã có dữ liệu (như Dashboard của report).
+   */
+  anchor?: ChartAnchor;
 }
 
 export async function mergeChartIntoWorkbook({
   mainBuffer,
   chartBuffer,
   targetSheetName,
+  anchor,
 }: MergeChartOptions): Promise<Buffer> {
   const mainZip = await JSZip.loadAsync(mainBuffer);
   const chartZip = await JSZip.loadAsync(chartBuffer);
@@ -74,11 +94,29 @@ export async function mergeChartIntoWorkbook({
     throw new Error("Chart-only workbook thiếu chart1.xml / drawing1.xml — xlsx-chart có thể đã đổi cấu trúc output");
   }
   const chartXml = await srcChart.async("string");
-  const drawingXml = await srcDrawing.async("string");
+  let drawingXml = await srcDrawing.async("string");
   const drawingRelsXml = (await srcDrawingRels.async("string")).replace(
     /chart1\.xml/,
     `chart${chartNum}.xml`,
   );
+
+  // Đổi tên mặc định (thường là "Диаграмма 1" do template gốc của
+  // xlsx-chart tạo với Excel tiếng Nga) sang tên trung tính.
+  drawingXml = drawingXml.replace(
+    /(<xdr:cNvPr id="\d+" name=")[^"]*(")/,
+    `$1Chart ${chartNum}$2`,
+  );
+
+  // Đặt lại vị trí chart nếu có chỉ định — mặc định xlsx-chart luôn đặt
+  // chart ở góc A1, sẽ đè lên nội dung có sẵn nếu không đổi lại.
+  if (anchor) {
+    const newAnchorXml =
+      `<xdr:from><xdr:col>${anchor.fromCol}</xdr:col><xdr:colOff>${anchor.fromColOffsetEmu ?? 0}</xdr:colOff>` +
+      `<xdr:row>${anchor.fromRow}</xdr:row><xdr:rowOff>${anchor.fromRowOffsetEmu ?? 0}</xdr:rowOff></xdr:from>` +
+      `<xdr:to><xdr:col>${anchor.toCol}</xdr:col><xdr:colOff>${anchor.toColOffsetEmu ?? 0}</xdr:colOff>` +
+      `<xdr:row>${anchor.toRow}</xdr:row><xdr:rowOff>${anchor.toRowOffsetEmu ?? 0}</xdr:rowOff></xdr:to>`;
+    drawingXml = drawingXml.replace(/<xdr:from>[\s\S]*?<\/xdr:to>/, newAnchorXml);
+  }
 
   mainZip.file(chartFile, chartXml);
   mainZip.file(drawingFile, drawingXml);
