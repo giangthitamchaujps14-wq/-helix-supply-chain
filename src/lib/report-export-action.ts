@@ -2,6 +2,8 @@ import { createServerFn } from "@tanstack/react-start";
 import type { ToolId } from "./types";
 import type { ToolResult } from "./engine";
 import { buildReportBuffer, reportFileName, type ReportMeta } from "./report-export";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
 
 export interface GenerateReportInput {
   tool: ToolId;
@@ -41,13 +43,11 @@ export const generateReportWithChart = createServerFn({ method: "POST" })
     try {
       const { default: XLSXChart } = await import("xlsx-chart");
       const { mergeChartIntoWorkbook } = await import("./xlsx-chart-merge.server");
-      const { createRequire } = await import("module");
-      const path = await import("path");
 
-      // Fix lỗi __dirname is not defined trên ESM / Vercel
-      const require = createRequire(import.meta.url);
-      const xlsxChartDir = path.dirname(require.resolve("xlsx-chart/package.json"));
-      const templatePath = path.join(xlsxChartDir, "template", "column.xlsx");
+      // Dùng template đã copy vào project (tránh lỗi resolve trên Vercel)
+      const __filename = fileURLToPath(import.meta.url);
+      const __dirname = dirname(__filename);
+      const templatePath = join(__dirname, "../assets/xlsx-chart-templates/column.xlsx");
 
       const fields = chartData.map((r) => r.sku);
       const values: Record<string, number> = {};
@@ -64,7 +64,7 @@ export const generateReportWithChart = createServerFn({ method: "POST" })
             fields,
             data: { QTY: values },
             chartTitle: `Top ${fields.length} SKU theo QTY`,
-            templatePath, // quan trọng: chỉ định rõ đường dẫn template
+            templatePath,
           },
           (err: Error | null, buf: Buffer) =>
             err ? reject(err) : resolve(buf),
@@ -83,7 +83,6 @@ export const generateReportWithChart = createServerFn({ method: "POST" })
         chartEmbedded: true,
       };
     } catch (err) {
-      // Ghép chart lỗi → vẫn trả báo cáo bình thường
       console.error(
         "[report-export] chart embed failed, falling back to plain report:",
         err,
