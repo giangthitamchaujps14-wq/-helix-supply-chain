@@ -2,8 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import type { ToolId } from "./types";
 import type { ToolResult } from "./engine";
 import { buildReportBuffer, reportFileName, type ReportMeta } from "./report-export";
-import { fileURLToPath } from "url";
-import { dirname, join } from "path";
+import { join } from "path";
 
 export interface GenerateReportInput {
   tool: ToolId;
@@ -44,10 +43,8 @@ export const generateReportWithChart = createServerFn({ method: "POST" })
       const { default: XLSXChart } = await import("xlsx-chart");
       const { mergeChartIntoWorkbook } = await import("./xlsx-chart-merge.server");
 
-      // Dùng template đã copy vào project (tránh lỗi resolve trên Vercel)
-      const __filename = fileURLToPath(import.meta.url);
-      const __dirname = dirname(__filename);
-      const templatePath = join(__dirname, "../assets/xlsx-chart-templates/column.xlsx");
+      // Template nằm trong public/ → Vercel luôn copy vào output
+      const templatePath = join(process.cwd(), "public/xlsx-chart-templates/column.xlsx");
 
       const fields = chartData.map((r) => r.sku);
       const values: Record<string, number> = {};
